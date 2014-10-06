@@ -1,0 +1,195 @@
+---
+title: Webscrapping do Jupiter Web da USP
+date : 2014-09-12
+tags: [tradução, previsão]
+--- &lead
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```
+
+O Objetivo dessa extração de dados é verificar se existe alguma unidade de ensino que oferece menos vagas de optativa livre para alunos das outras unidades da USP. 
+
+Vamos usar os pacotes abaixo:
+```{r, eval=FALSE}
+require(httr)
+require(XML)
+require(rvest)
+require(dplyr)
+```
+
+O primeiro passo é saber quais são todas as unidades de ensino da USP e qual é o código de cada uma delas. Isso pode ser obtido [aqui](https://uspdigital.usp.br/jupiterweb/jupColegiadoLista?tipo=D) e pode ser baixado para o `R`com o trecho de código abaixo: 
+
+```{r, eval=FALSE}
+unidades.ensino.url <- html("https://uspdigital.usp.br/jupiterweb/jupColegiadoLista?tipo=D")
+unidades.ensino.node <- html_node(unidades.ensino.url, "table")
+unidades.ensino.tab <- html_table(unidades.ensino.node[[3]], header=T)
+names(unidades.ensino.tab)[1] <- "Código"
+```
+
+Em seguida, para cada unidade de ensino vamos obter todas as disciplinas que são ou já foram oferecidas. Para isso, primeiramente defino uma função abaixo, que dado um código de uma unidade de ensino, devolve um `data.frame` contendo todas a sigla, o nome, a data de ativação e a data de desativação de cada disciplina da unidade.
+
+```{r, eval=FALSE}
+disciplinas.table <- function(codigo){
+  
+  disciplinas.url <- html(paste("https://uspdigital.usp.br/jupiterweb/jupDisciplinaLista?codcg=", codigo, "&letra=A-Z&tipo=D", sep = ""))
+  disciplinas.node <- html_node(disciplinas.url, "table")
+  html_table_fail <- failwith(f = html_table, default= NA, quiet=T)
+  disciplinas.tab <- html_table_fail(disciplinas.node[[3]], header=T)
+  if(is.na(disciplinas.tab)) {
+    disciplinas.tab <- html_table_fail(disciplinas.node[[2]], header=T)
+  }
+  return(disciplinas.tab)
+}
+```
+
+Usando a função `do` do pacote `dplyr` vamos aplicar esta função para cada código distindo que temos na base `unidades.ensino.tab`:
+
+```{r, eval=FALSE}
+unidades.ensino.tab <- unidades.ensino.tab %>% group_by(Código) %>% do(Código= .$Código, Nome = .$Nome, Disciplinas = disciplinas.table(.$Código))
+```
+
+Com o trecho de código abaixo, apenas filtro as unidades de ensinno que não oferecem nenhuma disciplina:
+```{r, eval=FALSE}
+unidades.ensino.tab.filtrada <- unidades.ensino.tab %>% filter(!is.na(Disciplinas))
+```
+
+Para o próximo passo que é obter o número de vagas para alunos de outras unidades USP para cada disciplina, precisamos de uma base de dados em que as linhas sejam as disciplinas, e não as unidades. Para isso usamos o código a seguir e obtemos a `disciplinas.tab`.
+
+```{r, eval=FALSE}
+disciplinas.tab <- NULL
+for(i in 1:nrow(unidades.ensino.tab.filtrada)){
+  tab <- unidades.ensino.tab.filtrada$Disciplinas[i][[1]]
+  tab$Código <- as.character(unidades.ensino.tab.filtrada$Código[i])
+  disciplinas.tab <- rbind(disciplinas.tab, tab)
+}
+```
+
+Como algumas siglas de disciplinas estão duplicadas, vamos retirar uma delas da base:
+```{r, eval=FALSE}
+disciplinas.tab <- disciplinas.tab %>% filter(!duplicated(Sigla))
+```
+
+A função abaixo retorna uma lista com as tabelas de oferecimento de cada turma dada a sigla de uma disciplina:
+
+```{r, eval=FALSE}
+turmas.table <- function (sigla) { 
+  html_node_fail <- failwith(f=html_node, default=NA, quiet = T)
+  readHTMLTable_fail  <- failwith(f = readHTMLTable , default=NULL, quiet = T)
+  
+  turmas.url <- html(paste("https://uspdigital.usp.br/jupiterweb/obterTurma?sgldis=", sigla, sep = ""))
+  turmas.node <- html_node_fail(turmas.url, "form td td table") 
+  
+  turmas.tab <- NULL
+  if(length(turmas.node) >= 3){
+    for(i in 1:(length(turmas.node)/3)){
+      tab <- readHTMLTable_fail(turmas.node[[3*i]])
+      if(length(tab) > 0){
+        if(ncol(tab) > 5){
+          tab$V3 <- as.numeric(as.character(tab$V3))
+          tab$V4 <- as.numeric(as.character(tab$V4))
+          tab$V5 <- as.numeric(as.character(tab$V5))
+          tab$V6 <- as.numeric(as.character(tab$V6))
+          
+          tmp <- tab[is.na(tab$V6), 2:5]
+          
+          tmp$V2 <- as.numeric(as.character(tmp$V2))
+          
+          tab[is.na(tab$V6), 2] <- NA
+          tab[is.na(tab$V6), 3:6] <- tmp
+          turmas.tab <- rbind(turmas.tab, tab)
+          }
+        if(ncol(tab) == 5){
+          
+          tmp <- tab
+          
+          tab[,3] <- as.numeric(as.character(tmp[,2]))
+          tab[,4] <- as.numeric(as.character(tmp[,3]))
+          tab[,5] <- as.numeric(as.character(tmp[,4]))
+          tab[,6] <- as.numeric(as.character(tmp[,5]))
+          tab[,2] <- NA
+          
+          names(tab) <- c("V1", "V2", "V3", "V4", "V5", "V6")
+          
+          turmas.tab <- rbind(turmas.tab, tab)
+          }
+        
+        }
+      }
+    }
+  if(length(turmas.tab) > 0){
+    if(ncol(turmas.tab) == 6){
+      names(turmas.tab) <- c("Matrícula", "Curso", "Vagas", "Inscritos", "Pendentes", "Matriculados")
+      }
+    }
+  return(turmas.tab)
+  }
+```
+
+Mais uma vez vamos usar a função `do` para aplicar a função criada para todas as siglas que encontramos. Neste caso, fiz em três partes já que este código demora bastante e eu não queria perder tudo se tievesse algum erro no finalzinho.
+
+
+```{r, eval=FALSE}
+turmas.tab1 <- disciplinas.tab %>% filter(row_number() < 6000) %>% group_by(Sigla) %>% do(Código= .$Código, Nome = .$Nome, Sigla = .$Sigla, Vagas = failwith(NA,turmas.table, quiet=T)(.$Sigla))
+save(turmas.tab1, file = "turmas_tab1_.RData")
+
+
+turmas.tab2 <- disciplinas.tab %>% mutate(n = row_number()) %>% filter(n >= 6000 & n < 10000) %>% group_by(Sigla) %>% do(Código= .$Código, Nome = .$Nome, Sigla = .$Sigla, Vagas = failwith(NA,turmas.table, quiet=T)(.$Sigla))
+save(turmas.tab2, file = "turmas_tab2_.RData")
+
+turmas.tab3 <- disciplinas.tab %>% mutate(n = row_number()) %>% filter(n >= 10000) %>% group_by(Sigla) %>% do(Código= .$Código, Nome = .$Nome, Sigla = .$Sigla, Vagas = failwith(NA,turmas.table, quiet=T)(.$Sigla))
+save(turmas.tab3, file = "turmas_tab3_.RData")
+```
+
+```{r, echo=FALSE, eval = F}
+load(file = "data/turmas_tab1_.RData")
+load(file = "data/turmas_tab2_.RData")
+load(file = "data/turmas_tab3.RData")
+```
+
+
+Agora vamos empilhar todas essas tabelas que obtivemos anteriormente, mas antesa disso precisamos filtrar as disciplinas que não estão sendo oferecidas neste semestre.
+
+```{r, eval=FALSE}
+list.condition <- sapply(turmas.tab1$Vagas, function(x) class(x)=="data.frame")
+turmas_tab1_2  <- turmas.tab1[list.condition,]
+
+list.condition <- sapply(turmas.tab2$Vagas, function(x) class(x)=="data.frame")
+turmas_tab2_2  <- turmas.tab2[list.condition,]
+
+list.condition <- sapply(turmas.tab3$Vagas, function(x) class(x)=="data.frame")
+turmas_tab3_2  <- turmas.tab3[list.condition,]
+
+
+turmas.tab <- rbind(turmas_tab1_2, turmas_tab2_2, turmas_tab3_2)
+
+turmas.tab2 <- NULL
+for(i in 1:nrow(turmas.tab)){
+  tab <- turmas.tab$Vagas[i][[1]]
+  tab$Código <- as.character(turmas.tab$Código[i])
+  tab$Sigla <- as.character(turmas.tab$Sigla[i])
+  tab$Nome <- as.character(turmas.tab$Nome[i])
+  turmas.tab2 <- rbind(turmas.tab2, tab)
+}
+```
+
+Vamos rodar novamente o código abaixo para obter  uma tabela com os nomes das unidade de ensino. E vamos passá-los para a tabela final usando o `left_join`.
+
+```{r, eval=FALSE}
+unidades.ensino.url <- html("https://uspdigital.usp.br/jupiterweb/jupColegiadoLista?tipo=D")
+unidades.ensino.node <- html_node(unidades.ensino.url, "table")
+unidades.ensino.tab <- html_table(unidades.ensino.node[[3]], header=T)
+names(unidades.ensino.tab) <- c("Código", "UnidadeEnsino")
+unidades.ensino.tab$Código <- as.character(unidades.ensino.tab$Código)
+
+turmas.tab2 <- left_join(turmas.tab2, unidades.ensino.tab, by = "Código") 
+
+```
+
+Falta apenas mudar a ordem das colunas:
+
+```{r, eval=FALSE}
+turmas.tab2 <- turmas.tab2[, c(10, 7, 9, 8, 1:6)]
+```
+
+
