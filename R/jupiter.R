@@ -17,6 +17,8 @@ jup_unidades_ensino <- function(){
 #' dado o código de uma unidade de ensino, retorna a lista de disciplinas, com sigla, nome, datas de ativação e desativação
 #' 
 #' @param codigo da unidade de ensino da qual deseja-se obter a lista de disciplinas.
+#' 
+#' @export
 jup_disciplinas <- function(codigo){
   disciplinas.url <- paste("https://uspdigital.usp.br/jupiterweb/jupDisciplinaLista?codcg=", codigo, "&letra=A-Z&tipo=D", sep = "")
   disciplinas <- rvest::html(disciplinas.url)
@@ -27,3 +29,7 @@ jup_disciplinas <- function(codigo){
   
   return(disciplinas.tab)
 }
+
+
+
+
