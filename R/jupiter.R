@@ -3,6 +3,8 @@
 #' @description devolve um data.frame com o código e o nome de todas as unidades de ensino da usp.
 #' Essa função não tem argumentos.
 #' 
+#' @example ue <- jup_unidades_ensino()
+#' 
 #' @export
 jup_unidades_ensino <- function(){
   uni.ens <- rvest::html("https://uspdigital.usp.br/jupiterweb/jupColegiadoLista?tipo=D")
@@ -18,7 +20,6 @@ jup_unidades_ensino <- function(){
 #' 
 #' @param codigo da unidade de ensino da qual deseja-se obter a lista de disciplinas.
 jup_disciplinas <- function(codigo){
-  
   disciplinas.url <- paste("https://uspdigital.usp.br/jupiterweb/jupDisciplinaLista?codcg=", codigo, "&letra=A-Z&tipo=D", sep = "")
   disciplinas <- rvest::html(disciplinas.url)
   disciplinas <- rvest::html_nodes(disciplinas, "table")
