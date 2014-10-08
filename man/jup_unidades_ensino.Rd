@@ -7,5 +7,6 @@ jup_unidades_ensino()
 }
 \description{
 devolve um data.frame com o código e o nome de todas as unidades de ensino da usp.
+Essa função não tem argumentos.
 }
 
